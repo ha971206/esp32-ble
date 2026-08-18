@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32 BLE Controller</title>
+    <title>ESP32 BLE 한글 타이퍼</title>
     <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; background-color: #f2f2f7; }
         .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
@@ -16,18 +16,40 @@
 </head>
 <body>
     <div class="card">
-        <h2>ESP32 BLE 타이핑 전송기</h2>
+        <h2>ESP32 BLE 한글 타이퍼</h2>
         <div id="status">상태: 연결 안 됨</div>
         <button onclick="connectBLE()">1. ESP32 블루투스 연결</button>
-        <textarea id="inputText" placeholder="카톡 장문이나 코드를 여기에 붙여넣으세요..."></textarea>
+        <textarea id="inputText" placeholder="카톡 장문이나 한글 텍스트를 붙여넣으세요..."></textarea>
         <button onclick="sendText()" style="background-color: #34c759;">2. PC로 전송하기</button>
     </div>
 
     <script>
         const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
         const CHARACTERISTIC_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-
         let rxCharacteristic = null;
+
+        // 두벌식 한글 자모 맵핑
+        const CHO = ["r","R","s","e","E","f","a","q","Q","t","T","d","w","W","c","z","x","v","g"];
+        const JOUNG = ["k","o","i","O","j","p","u","P","h","hk","ho","hl","nj","nj","nl","b","m","ml","l"];
+        const JONG = ["","r","R","rt","s","sw","sg","e","f","fr","fa","fq","ft","fx","fv","fg","a","q","qt","t","T","d","w","c","z","x","v","g"];
+
+        // 한글을 영문 자판 스트링으로 변환 함수
+        function korToEng(text) {
+            let result = "";
+            for (let i = 0; i < text.length; i++) {
+                let code = text.charCodeAt(i);
+                if (code >= 0xAC00 && code <= 0xD7A3) { // 완성형 한글
+                    code -= 0xAC00;
+                    let jong = code % 28;
+                    let joung = ((code - jong) / 28) % 21;
+                    let cho = parseInt(((code - jong) / 28) / 21);
+                    result += CHO[cho] + JOUNG[joung] + JONG[jong];
+                } else {
+                    result += text[i]; // 영문, 숫자, 특수문자, 개행 등은 그대로
+                }
+            }
+            return result;
+        }
 
         async function connectBLE() {
             try {
@@ -36,12 +58,10 @@
                     filters: [{ name: 'ESP32-S3 Keyboard' }],
                     optionalServices: [SERVICE_UUID]
                 });
-
                 document.getElementById('status').innerText = "상태: 연결 중...";
                 const server = await device.gatt.connect();
                 const service = await server.getPrimaryService(SERVICE_UUID);
                 rxCharacteristic = await service.getCharacteristic(CHARACTERISTIC_RX_UUID);
-
                 document.getElementById('status').innerText = "상태: ✅ 연결됨 (" + device.name + ")";
             } catch (error) {
                 console.error(error);
@@ -55,24 +75,30 @@
                 return;
             }
 
-            const text = document.getElementById('inputText').value;
-            if (!text) {
-                alert("전송할 텍스트를 입력해주세요.");
-                return;
-            }
+            const rawText = document.getElementById('inputText').value;
+            if (!rawText) return;
 
             document.getElementById('status').innerText = "상태: ⏳ 전송 중...";
 
-            // UTF-8 바이트 인코딩 (한글, 줄바꿈, 탭 문자 완벽 보존)
-            const encoder = new TextEncoder();
-            const data = encoder.encode(text);
+            // 한글 포함 여부 확인
+            const hasKorean = /[ㄱ-ㅎ|ㅏ-ㅣ|가-힣]/.test(rawText);
             
-            // 80바이트 단위로 자동 쪼개서 40ms 간격으로 전송 (Resources are insufficient 에러 방지)
-            const chunkSize = 80; 
+            // 한글이 있으면 영문 자판으로 변환
+            let convertedText = korToEng(rawText);
+
+            // 한글이 들어있을 때만 시작과 끝에 한/영 키 전환 신호 (ASCII 0x01 = SOH) 삽입
+            if (hasKorean) {
+                convertedText = "\x01" + convertedText + "\x01";
+            }
+
+            const encoder = new TextEncoder();
+            const data = encoder.encode(convertedText);
+            
+            const chunkSize = 80;
             for (let i = 0; i < data.length; i += chunkSize) {
                 const chunk = data.slice(i, i + chunkSize);
                 await rxCharacteristic.writeValue(chunk);
-                await new Promise(resolve => setTimeout(resolve, 40)); 
+                await new Promise(resolve => setTimeout(resolve, 40));
             }
 
             document.getElementById('status').innerText = "상태: ✅ 전송 완료!";
